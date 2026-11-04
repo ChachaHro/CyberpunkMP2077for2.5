@@ -1,0 +1,85 @@
+name: Build linux
+
+on:
+  workflow_dispatch:   # lancement manuel (gh workflow run)
+  pull_request:
+  push:
+    branches:
+      - main
+      - dev
+      - 'port-*'   # 2.5 port branches
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04]
+        arch: [x64]
+        mode: [release]
+
+    runs-on: ${{ matrix.os }}
+    if: "!contains(github.event.head_commit.message, 'ci skip')"
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: 'Checkout submodules'
+      # Only needed if a submodule points to a private repository: set the SUBMODULES_TOKEN secret
+      # to a read-only GitHub token for it.
+      shell: bash
+      env:
+        SUBMODULES_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+      run: |
+        git config --global url."https://github.com/".insteadOf "git@github.com:"
+        if [ -n "$SUBMODULES_TOKEN" ]; then
+          git config --global url."https://x-access-token:${SUBMODULES_TOKEN}@github.com/ChachaHro/".insteadOf "https://github.com/ChachaHro/"
+        fi
+        git submodule sync --recursive
+        git submodule update --init --force --recursive --depth=1
+
+    # Install dependencies
+    - name: 'Update apt repositories'
+      run: sudo apt-get update
+
+    # Install pnpm for better disk/cache performance
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+
+    # Install xmake
+    - name: 'Setup xmake'
+      uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: 3.1.2   # même version que sous Windows (portage 2.5)
+
+    # Update xmake repository (in order to have the file that will be cached)
+    - name: 'Update xmake repository'
+      run: xmake repo --update
+
+    # Paquets xmake compilés (≈ 45 min à froid) : gardés d'un run à l'autre
+    - name: 'Cache xmake dependencies'
+      uses: actions/cache@v4
+      with:
+        path: ~/.xmake/packages
+        key: ${{ runner.os }}-xmake-packages-${{ hashFiles('**/xmake.lua') }}
+        restore-keys: |
+          ${{ runner.os }}-xmake-packages-
+
+    - name: Setup dotnet
+      uses: actions/setup-dotnet@v4
+      with:
+        # 10 : le générateur de SDK (CppSharp) vise net10.0 sous Linux ; 8 et 9 pour le reste
+        dotnet-version: |
+          8
+          9
+          10
+
+    # Setup compilation mode and install project dependencies
+    - name: 'Configure xmake and install dependencies'
+      continue-on-error: true
+      run: timeout 75m xmake config --arch=${{ matrix.arch }} --mode=${{ matrix.mode }} --yes
+
+    # Build the server
+    - name: Build
+      run: xmake -y

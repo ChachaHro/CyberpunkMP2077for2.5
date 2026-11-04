@@ -1,0 +1,100 @@
+#include "PlayerScriptInstance.h"
+#include "Components/PlayerComponent.h"
+#include <GameServer.h>
+#include <PlayerManager.h>
+#include "IRpc.h"
+
+
+PlayerScriptInstance::PlayerScriptInstance(flecs::entity aPlayer)
+    : m_player(aPlayer)
+    , m_movementComponent(aPlayer)
+    , m_attachmentComponent(aPlayer)
+{
+}
+
+PlayerScriptInstance::~PlayerScriptInstance()
+{
+}
+
+uint64_t PlayerScriptInstance::GetId() const
+{
+    return m_player.raw_id();
+}
+
+uint32_t PlayerScriptInstance::GetConnectionId() const
+{
+    if (const auto pComponent = m_player.get<PlayerComponent>())
+        return pComponent->Connection;
+
+    return -1;
+}
+
+uint64_t PlayerScriptInstance::GetPuppetId() const
+{
+    if (const auto pComponent = m_player.get<PlayerComponent>())
+        return pComponent->Puppet.raw_id();
+
+    return -1;
+}
+
+IMovementComponent* PlayerScriptInstance::GetMovementComponent()
+{
+    return &m_movementComponent;
+}
+
+IAttachmentComponent* PlayerScriptInstance::GetAttachmentComponent()
+{
+    return &m_attachmentComponent;
+}
+
+const char* PlayerScriptInstance::GetUsername() const
+{
+    if (const auto pComponent = m_player.get<PlayerComponent>())
+        return pComponent->Username.c_str();
+
+    return "None";
+}
+
+void PlayerScriptInstance::SendChat(const char* From, const char* Message)
+{
+    if (const auto pComponent = m_player.get<PlayerComponent>())
+    {
+        server::ChatMessage msg;
+        msg.set_username(From);
+        msg.set_message(Message);
+        GServer->Send(pComponent->Connection, msg);
+    }
+    else
+        spdlog::get("Scripting")->warn("Attempt to send a message to a player that doesn't have a PlayerComponent!");
+}
+
+void PlayerScriptInstance::Call(uint64_t Klass, uint64_t Function, IBuffer* Arguments)
+{
+    IRpc::Get()->Call(GetId(), Klass, Function, Arguments);
+}
+
+const char* PlayerScriptInstance::TakeSessionToken()
+{
+    // Copié par le marshalling .NET dès le retour : le jeton ne reste nulle part en mémoire native.
+    thread_local std::string s_token;
+    s_token.clear();
+    if (auto* pComponent = m_player.get_mut<PlayerComponent>())
+        std::swap(s_token, pComponent->SessionToken);
+    return s_token.c_str();
+}
+
+void PlayerScriptInstance::Kick()
+{
+    const auto pComponent = m_player.get<PlayerComponent>();
+    if (!pComponent)
+        return;
+
+    // Server::Kick détruit le joueur immédiatement : on le diffère pour ne pas invalider l'appelant
+    // (le plugin est souvent encore dans son callback d'arrivée du joueur).
+    const auto connection = pComponent->Connection;
+    GServer->GetTaskQueue()->Add([connection]
+    {
+        if (GServer->GetWorld()->get_mut<PlayerManager>()->GetByConnectionId(connection).is_valid())
+            GServer->Kick(connection);
+    });
+}

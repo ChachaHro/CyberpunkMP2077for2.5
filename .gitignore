@@ -1,0 +1,43 @@
+# Tools / IDEs
+vs20*/
+vsxmake*/
+.vs/
+/.idea/
+compile_commands.json
+code/scripting/CyberpunkSdk/CyberpunkSdk.csproj.user
+code/scripting/JobSystem/Properties/PublishProfiles/FolderProfile.pubxml.user
+
+# Dependencies
+.xmake/*
+package/*
+.cache/*
+node_modules
+
+# Generated
+**.netpack.gen.cpp
+**.netpack.gen.h
+
+# Builds
+build/*
+out/*
+dist
+distrib/*
+
+# Miscellaneous
+code/client/Archives/CyberpunkMP.zip
+Cyberpunk2077.exe*
+imgui.ini
+# Local secrets / runtime state (docker compose), anchored at the root: on Windows (case-insensitive)
+# a bare "config/" would also ignore source folders named Config/.
+/.env
+/config/
+/logs/
+/plugins/
+
+# Sorties de build .NET des plugins
+code/server/scripting/*/bin/
+code/server/scripting/*/obj/
+/.vscode/
+
+# Server plugins developed in their own (private) repositories, copied here to build them locally
+code/server/scripting/RoleplaySystem/

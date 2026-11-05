@@ -8,10 +8,92 @@
 #include "Components/CellComponent.h"
 #include <Components/CharacterComponent.h>
 #include <Components/VehicleComponent.h>
+#include <Components/MovementGuardComponent.h>
 
 #include "GameServer.h"
 #include "World.h"
 #include "PlayerManager.h"
+#include "Security/GameplayRules.h"
+
+namespace
+{
+GameplayRules::Vec3 ToRuleVec(const glm::vec3& aVector) noexcept
+{
+    return {aVector.x, aVector.y, aVector.z};
+}
+
+// Un autre personnage occupe-t-il déjà ce siège ?
+bool IsSeatTaken(flecs::world& aWorld, flecs::entity aVehicle, uint64_t aSeatId, flecs::entity aExcept) noexcept
+{
+    bool taken = false;
+    aWorld.each(
+        [&](flecs::entity aEntity, const AttachmentComponent& aAttachment)
+        {
+            if (aEntity != aExcept && aAttachment.Parent == aVehicle && aAttachment.SlotId == aSeatId)
+                taken = true;
+        });
+    return taken;
+}
+
+Vector<flecs::entity> OwnedVehicles(flecs::entity aPlayer) noexcept
+{
+    Vector<flecs::entity> vehicles;
+    aPlayer.children(
+        [&vehicles](flecs::entity aChild)
+        {
+            if (aChild.has<VehicleComponent>())
+                vehicles.push_back(aChild);
+        });
+    // Identifiants croissants : les plus anciens d'abord
+    std::sort(vehicles.begin(), vehicles.end(), [](flecs::entity aLeft, flecs::entity aRight) { return aLeft.id() < aRight.id(); });
+    return vehicles;
+}
+
+// Contrôle de vitesse avant d'accepter une nouvelle position. Faux seulement si le joueur vient d'être
+// expulsé (ses entités sont alors détruites : ne plus y toucher).
+bool CheckMovementSpeed(flecs::entity aTarget, const glm::vec3& aNewPosition, ConnectionId aConnectionId) noexcept
+{
+    const auto* pPrevious = aTarget.get<MovementComponent>();
+    if (!pPrevious)
+        return true;
+
+    const auto* pConfig = GServer->GetConfig().get();
+    const bool inVehicle = aTarget.has<VehicleComponent>() || aTarget.has<AttachmentComponent>();
+    const GameplayRules::MovementLimits limits{inVehicle ? pConfig->MaxVehicleSpeed : pConfig->MaxFootSpeed,
+                                               pConfig->MovementBurstSeconds, pConfig->MovementStrikeDecaySeconds};
+
+    const auto now = std::chrono::steady_clock::now();
+    if (!aTarget.has<MovementGuardComponent>())
+        aTarget.set<MovementGuardComponent>({GameplayRules::FreshMovementState(limits), now, true});
+
+    auto* pGuard = aTarget.get_mut<MovementGuardComponent>();
+    if (!pGuard)
+        return true;
+
+    const float elapsed = std::chrono::duration<float>(now - pGuard->LastMove).count();
+    pGuard->LastMove = now;
+
+    const auto from = ToRuleVec(pPrevious->Position);
+    const auto to = ToRuleVec(aNewPosition);
+    // À pied : distance horizontale (une chute n'est pas de la triche) ; en véhicule : en 3D
+    const float distance = inVehicle ? GameplayRules::Distance(from, to) : GameplayRules::HorizontalDistance(from, to);
+
+    if (GameplayRules::ConsumeMovement(pGuard->State, distance, elapsed, limits))
+        return true;
+
+    spdlog::warn("Connection {:x}: entity {:x} moved {:.0f} m in {:.2f} s (limit {:.0f} m/s), {:.1f} strike(s)", aConnectionId,
+                 aTarget.id(), distance, elapsed, limits.MaxSpeed, pGuard->State.Strikes);
+
+    if (GameplayRules::ShouldKickForMovement(pGuard->State, pConfig->MovementKickStrikes))
+    {
+        spdlog::warn("Connection {:x} kicked: repeated impossible movements", aConnectionId);
+        GServer->Kick(aConnectionId);
+        return false;
+    }
+
+    return true;
+}
+} // namespace
 
 
 constexpr static float sCellSize = 60 * 100;
@@ -137,6 +219,35 @@ void Level::Remove(flecs::entity aEntity) noexcept
     aEntity.destruct();
 }
 
+void Level::RemoveVehicle(flecs::entity aVehicle) noexcept
+{
+    if (!aVehicle || !aVehicle.is_alive() || !aVehicle.has<VehicleComponent>())
+        return;
+
+    // Les occupants descendent d'abord (NotifyVehicleExit), sinon ils resteraient attachés à une entité morte
+    Vector<flecs::entity> occupants;
+    GetWorld()->each(
+        [&occupants, aVehicle](flecs::entity aEntity, const AttachmentComponent& aAttachment)
+        {
+            if (aAttachment.Parent == aVehicle)
+                occupants.push_back(aEntity);
+        });
+    for (auto occupant : occupants)
+        occupant.remove<AttachmentComponent>();
+
+    spdlog::info("Removing vehicle {:x}", aVehicle.id());
+    Remove(aVehicle);
+}
+
+void Level::RemovePlayerVehicles(flecs::entity aPlayer) noexcept
+{
+    if (!aPlayer || !aPlayer.is_alive())
+        return;
+
+    for (auto vehicle : OwnedVehicles(aPlayer))
+        RemoveVehicle(vehicle);
+}
+
 
 void Level::Update(flecs::entity aEntity) noexcept
 {
@@ -191,6 +302,16 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     if (!GServer->IsPlayerAllowed(*pComponent))
     {
         spdlog::warn("Spawn request from unauthorized connection {:x}, ignored", aMessage.ConnectionId);
+        return;
+    }
+
+    // Une seule apparition par connexion (le client n'en demande qu'une, à l'authentification) : sinon
+    // chaque demande créerait un nouveau personnage sans retirer l'ancien.
+    if (pComponent->Puppet && pComponent->Puppet.is_alive())
+    {
+        spdlog::warn("Second spawn request from connection {:x}, ignored", aMessage.ConnectionId);
+        response.set_id(pComponent->Puppet);
+        GServer->Send(aMessage.ConnectionId, response);
         return;
     }
 
@@ -263,6 +384,16 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     component.Velocity = aMessage.get_speed();
     component.Tick = aMessage.get_tick();
 
+    if (!GameplayRules::IsSaneWorldPosition(ToRuleVec(component.Position)) ||
+        !GameplayRules::IsSaneWorldPosition(ToRuleVec(component.Rotation)) || !std::isfinite(component.Velocity))
+    {
+        spdlog::warn("Invalid position or rotation from connection {:x}, ignored", aMessage.ConnectionId);
+        return;
+    }
+
+    if (!CheckMovementSpeed(target, component.Position, aMessage.ConnectionId))
+        return; // joueur expulsé : ses entités n'existent plus
+
     if constexpr (IsDebug())
     {
         component.Position += glm::vec3(5, 0, 0);
@@ -306,6 +437,15 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
     if (!GServer->IsPlayerAllowed(*pPlayer))
         return;
 
+    // Seul le personnage du joueur monte en véhicule (pas un de ses véhicules)
+    if (target != pPlayer->Puppet)
+    {
+        spdlog::warn("Attempt to put a non-character entity in a vehicle from connection {:x}", aMessage.ConnectionId);
+        return;
+    }
+
+    const auto* pConfig = GServer->GetConfig().get();
+    const uint64_t seatId = aMessage.get_sit_id();
     flecs::entity vehicle;
 
     if (aMessage.has_remote_vehicle_id())
@@ -319,10 +459,44 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
             return;
         }
 
+        // Il faut être à côté du véhicule (sinon : vol à distance n'importe où sur la carte)
+        const auto* pCharacterMove = target.get<MovementComponent>();
+        const auto* pVehicleMove = vehicle.get<MovementComponent>();
+        if (pCharacterMove && pVehicleMove &&
+            !GameplayRules::IsWithinDistance(ToRuleVec(pCharacterMove->Position), ToRuleVec(pVehicleMove->Position), pConfig->MaxVehicleEnterDistance))
+        {
+            spdlog::warn("Connection {:x} tried to enter vehicle {:x} from too far away, ignored", aMessage.ConnectionId, vehicle.id());
+            return;
+        }
+
+        if (IsSeatTaken(*GetWorld(), vehicle, seatId, target))
+        {
+            spdlog::warn("Connection {:x} tried to take an occupied seat in vehicle {:x}, ignored", aMessage.ConnectionId, vehicle.id());
+            return;
+        }
+
+        // Le volant donne la propriété du véhicule : jamais celui d'un autre joueur connecté, sauf config
+        if (seatId == GameplayRules::kDriverSeatId)
+        {
+            const auto owner = vehicle.parent();
+            const bool ownedByOther = owner && owner != player && owner.has<PlayerComponent>();
+            if (!GameplayRules::CanTakeDriverSeat(ownedByOther, pConfig->AllowVehicleTakeover))
+            {
+                spdlog::warn("Connection {:x} tried to drive another player's vehicle {:x}, ignored", aMessage.ConnectionId, vehicle.id());
+                return;
+            }
+        }
+
         spdlog::info("Player {:x} entered vehicle {:x}", aMessage.get_id(), vehicle.id());
     }
     else
     {
+        // Un véhicule inconnu du serveur est créé : on retire d'abord les plus anciens au-delà de la limite
+        const auto owned = OwnedVehicles(player);
+        const auto toRemove = GameplayRules::VehiclesToRemoveBeforeSpawn(static_cast<uint32_t>(owned.size()), pConfig->MaxVehiclesPerPlayer);
+        for (uint32_t i = 0; i < toRemove && i < owned.size(); ++i)
+            RemoveVehicle(owned[i]);
+
         glm::vec3 pos = {aMessage.get_position().get_x(), aMessage.get_position().get_y(), aMessage.get_position().get_z()};
         glm::vec3 rot = {0.f, 0.f, aMessage.get_rotation()};
 
@@ -370,6 +544,9 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
     }
 
     if (!GServer->IsPlayerAllowed(*pPlayer))
+        return;
+
+    if (target != pPlayer->Puppet)
         return;
 
     //if (auto* pAttachment = target.get<AttachmentComponent>())

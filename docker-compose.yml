@@ -17,6 +17,9 @@ services:
       - "${CYBERPUNKMP_PORT:-11778}:11778/tcp"
 
     volumes:
+      # The server runs as uid/gid 10001 (see Dockerfile). Create these folders and give them to
+      # that user once before the first start:
+      #   mkdir -p config plugins logs && sudo chown -R 10001:10001 config plugins logs
       # Config is created on first run - keep it so settings survive a rebuild.
       - ./config:/app/config
       # Server-side plugins.

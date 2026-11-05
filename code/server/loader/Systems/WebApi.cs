@@ -29,9 +29,32 @@ namespace Server.Loader.Systems
             Plugins = plugins;
 
             var port = IConfig.Get().Port;
-            var url = $"http://+:{port}";
+            Credentials = ReadAdminCredentials();
 
-            ServerTask = CreateWebServer(url).RunAsync();
+            // Sans identifiants admin, une API sans mot de passe n'écoute que sur la machine locale (build
+            // Debug seulement : en Release, les identifiants sont obligatoires).
+            var host = Credentials == null ? "127.0.0.1" : "+";
+            if (Credentials == null)
+                new CyberpunkSdk.Systems.Logger("WebApi").Warn("Admin API without credentials: listening on 127.0.0.1 only.");
+
+            ServerTask = CreateWebServer($"http://{host}:{port}").RunAsync();
+        }
+
+        private (string Username, string Password)? Credentials { get; }
+
+        private static (string Username, string Password)? ReadAdminCredentials()
+        {
+            // NOTE: should be replaced with Discord authentication later.
+            var username = Environment.GetEnvironmentVariable("CYBERPUNKMP_ADMIN_USERNAME");
+            var password = Environment.GetEnvironmentVariable("CYBERPUNKMP_ADMIN_PASSWORD");
+
+            if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
+                return (username, password);
+
+            if (EnvironmentHelper.IsDebug)
+                return null;
+
+            throw new SecurityException("You must provide admin credentials using environment variables.");
         }
 
         ~WebApi()
@@ -95,18 +118,10 @@ namespace Server.Loader.Systems
 
         private void RegisterAuthentication(WebServer server)
         {
-            if (EnvironmentHelper.IsDebug)
+            // Pas d'identifiants (Debug seulement) : l'API n'écoute que sur 127.0.0.1, voir le constructeur
+            if (Credentials is not { } credentials)
             {
                 return;
-            }
-
-            // NOTE: should be replaced with Discord authentication later.
-            var username = Environment.GetEnvironmentVariable("CYBERPUNKMP_ADMIN_USERNAME");
-            var password = Environment.GetEnvironmentVariable("CYBERPUNKMP_ADMIN_PASSWORD");
-
-            if (username == null || password == null)
-            {
-                throw new SecurityException("You must provide admin credentials using environment variables.");
             }
 
             // NOTE: always allow access to the following routes for the Server
@@ -126,10 +141,7 @@ namespace Server.Loader.Systems
                 }
             }
 
-            var module = new AdminAuthModule(whitelist.ToArray());
-
-            module.WithAccount(username, password);
-            server.WithModule(module);
+            server.WithModule(new AdminAuthModule(whitelist.ToArray(), credentials.Username, credentials.Password));
         }
 
         #region Routes
@@ -166,8 +178,16 @@ namespace Server.Loader.Systems
         #endregion
     }
 
-    internal class AdminAuthModule(string[] whitelist) : BasicAuthenticationModule("/", "Admin")
+    internal class AdminAuthModule(string[] whitelist, string adminUsername, string adminPassword)
+        : BasicAuthenticationModule("/", "Admin")
     {
+        // Empreintes calculées une fois : la comparaison se fait sur des tailles égales, en temps constant
+        private readonly byte[] _username = Hash(adminUsername);
+        private readonly byte[] _password = Hash(adminPassword);
+
+        private static byte[] Hash(string? value) =>
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value ?? string.Empty));
+
         protected override Task<bool> VerifyCredentialsAsync(string path, string userName, string password,
             CancellationToken cancellationToken)
         {
@@ -177,7 +197,10 @@ namespace Server.Loader.Systems
                 return Task.FromResult(true);
             }
 
-            return base.VerifyCredentialsAsync(path, userName, password, cancellationToken);
+            // Les deux comparaisons sont toujours faites (pas de raccourci qui trahirait un bon pseudo)
+            var userOk = System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(Hash(userName), _username);
+            var passwordOk = System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(Hash(password), _password);
+            return Task.FromResult(userOk & passwordOk);
         }
     }
 }

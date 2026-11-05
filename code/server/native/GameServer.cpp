@@ -98,12 +98,70 @@ void GameServer::OnConsume(const void* apData, uint32_t aSize, ConnectionId aCon
 {
     // ReSharper disable once CppCStyleCast
     ViewBuffer buffer((uint8_t*)apData, aSize);  // NOLINT(clang-diagnostic-cast-qual)
+
+    // Type du message (premier entier du paquet) lu à part, pour la limite de débit avant décodage
+    {
+        Buffer::Reader peek(&buffer);
+        const uint64_t opcode = Serialization::ReadVarInt(peek);
+        bool kick = false;
+        if (!AllowMessage(aConnectionId, opcode, kick))
+        {
+            if (kick)
+            {
+                spdlog::warn("Connection {:x} kicked: too many messages", aConnectionId);
+                Kick(aConnectionId);
+            }
+            return;
+        }
+    }
+
     Buffer::Reader reader(&buffer);
 
     if (const auto result = client::Deserializer::Process(reader, aConnectionId, m_dispatcher); !result)
     {
-        spdlog::error("Failed to deserialize packet from {}", aConnectionId);
+        spdlog::warn("Failed to deserialize packet from connection {:x}, kicking", aConnectionId);
+        Kick(aConnectionId);
     }
+}
+
+bool GameServer::AllowMessage(ConnectionId aConnectionId, uint64_t aOpcode, bool& aKick) noexcept
+{
+    aKick = false;
+
+    if (!RateLimit::IsKnownKind(aOpcode))
+    {
+        spdlog::warn("Unknown message type {} from connection {:x}, kicking", aOpcode, aConnectionId);
+        aKick = true;
+        return false;
+    }
+
+    if (!(m_config.RateLimitScale > 0.f))
+        return true;
+
+    const auto now = std::chrono::steady_clock::now();
+    auto& state = m_rateLimits[aConnectionId];
+    const auto index = static_cast<size_t>(aOpcode);
+
+    auto limits = RateLimit::kDefaultLimits[index];
+    // Les déplacements suivent UpdateRate (personnage + véhicule à chaque mise à jour) : jamais moins de 4 par mise à jour
+    if (static_cast<RateLimit::MessageKind>(index) == RateLimit::MessageKind::MoveEntity)
+    {
+        limits.Rate = (std::max)(limits.Rate, 4.f * m_config.UpdateRate);
+        limits.Burst = (std::max)(limits.Burst, 2.f * limits.Rate);
+    }
+
+    const float elapsed = std::chrono::duration<float>(now - state.LastMessage[index]).count();
+    state.LastMessage[index] = now;
+
+    if (RateLimit::TryConsume(state.Buckets[index], limits, elapsed, m_config.RateLimitScale))
+        return true;
+
+    const float sinceDrop = std::chrono::duration<float>(now - state.LastDrop).count();
+    state.LastDrop = now;
+    aKick = RateLimit::RecordDrop(state.Offences, sinceDrop, 10.f, m_config.RateLimitKickDrops);
+    if (!aKick && state.Offences.Count <= 1.f)
+        spdlog::warn("Connection {:x} sends too many messages of type {}: ignoring the excess", aConnectionId, aOpcode);
+    return false;
 }
 
 void GameServer::OnConnection(ConnectionId aHandle)
@@ -123,11 +181,16 @@ void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason a
 {
     spdlog::info("Connection {:x} ended (reason {})", aConnectionId, static_cast<uint32_t>(aReason));
 
+    m_rateLimits.erase(aConnectionId);
+
     auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
 
     if (const auto player = pPlayerManager->GetByConnectionId(aConnectionId))
     {
         pPlayerManager->Remove(player);
+
+        // Véhicules d'abord : détruits avec le joueur, ils resteraient en fantômes chez les autres clients
+        GetWorld()->get_mut<Level>()->RemovePlayerVehicles(player);
 
         if (auto* pPlayerComponent = player.get<PlayerComponent>())
         {

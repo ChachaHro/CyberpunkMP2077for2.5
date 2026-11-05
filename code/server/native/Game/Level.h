@@ -15,6 +15,11 @@ struct Level
     void Add(flecs::entity aEntity) noexcept;
     void Remove(flecs::entity aEntity) noexcept;
 
+    // Retire un véhicule chez tous les clients : ses occupants en descendent d'abord.
+    void RemoveVehicle(flecs::entity aVehicle) noexcept;
+    // Retire tous les véhicules d'un joueur (à la déconnexion, avant de détruire son entité).
+    void RemovePlayerVehicles(flecs::entity aPlayer) noexcept;
+
     gsl::not_null<GridCell*> GetCell(GridCell::TPosition aPosition) noexcept;
     gsl::not_null<World*> GetWorld() noexcept { return m_pWorld; }
 

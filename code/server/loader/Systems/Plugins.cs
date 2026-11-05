@@ -174,24 +174,22 @@ namespace Server.Loader.Systems
             }
         }
 
-        public static async Task DownloadFileAsync(string url, string downloadPath)
+        private static readonly HttpClient DownloadClient = new() { Timeout = TimeSpan.FromMinutes(5) };
+
+        // Lève une exception en cas d'échec : un téléchargement raté ne doit jamais passer pour réussi.
+        private static byte[] DownloadBytes(string url)
         {
-            HttpClient client = new HttpClient();
-            try
-            {
-                HttpResponseMessage response = await client.GetAsync(url);
-                response.EnsureSuccessStatusCode();
-
-                byte[] fileBytes = await response.Content.ReadAsByteArrayAsync();
-                await File.WriteAllBytesAsync(downloadPath, fileBytes);
-
-                Console.WriteLine("File downloaded successfully.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"An error occurred: {ex.Message}");
-            }
+            using var response = DownloadClient.GetAsync(url).GetAwaiter().GetResult();
+            response.EnsureSuccessStatusCode();
+            return response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
         }
+
+        // Le fichier téléchargé doit avoir l'empreinte SHA-1 annoncée par CurseForge : sinon (fichier
+        // altéré en route, miroir compromis) il n'est ni extrait ni chargé.
+        internal static bool MatchesChecksum(byte[] content, string expectedSha1) =>
+            !string.IsNullOrEmpty(expectedSha1) &&
+            string.Equals(Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(content)), expectedSha1,
+                StringComparison.OrdinalIgnoreCase);
 
         private void DownloadMod(ModDef def)
         {
@@ -210,10 +208,35 @@ namespace Server.Loader.Systems
 
             logger.Info($"Mod {def.Id} - {def.Name} missing.");
 
+            if (string.IsNullOrEmpty(def.Url) || string.IsNullOrEmpty(def.Checksum))
+            {
+                logger.Error($"Mod {def.Id} - {def.Name}: no approved file with a SHA-1 checksum, skipped.");
+                return;
+            }
+
+            // Téléchargé et vérifié AVANT de toucher à la version en place
+            byte[] content;
+            try
+            {
+                content = DownloadBytes(def.Url);
+            }
+            catch (Exception ex)
+            {
+                logger.Error($"Mod {def.Id} - {def.Name}: download failed ({ex.Message}), keeping the current version.");
+                return;
+            }
+
+            if (!MatchesChecksum(content, def.Checksum))
+            {
+                logger.Error($"Mod {def.Id} - {def.Name}: SHA-1 checksum mismatch, download refused.");
+                return;
+            }
+
             foreach (var directory in artifact.Directories)
             {
                 logger.Debug($"Deleting {directory}");
-                Directory.Delete(directory, true);
+                if (Directory.Exists(directory))
+                    Directory.Delete(directory, true);
             }
 
             // Define the path for the downloaded zip file and extraction directory
@@ -228,8 +251,7 @@ namespace Server.Loader.Systems
 
             Directory.CreateDirectory(tempExtractPath);
 
-            // Download the zip file
-            DownloadFileAsync(def.Url, downloadPath).GetAwaiter().GetResult();
+            File.WriteAllBytes(downloadPath, content);
 
             // Unzip the file to the temporary extraction path
             ZipFile.ExtractToDirectory(downloadPath, tempExtractPath);

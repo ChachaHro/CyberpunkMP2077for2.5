@@ -32,6 +32,26 @@ struct Config : IConfig
     // Si vrai, un joueur ne peut rien faire (apparaître, bouger, véhicules, chat, RPC) et ne reçoit pas
     // le monde tant qu'un plugin ne l'a pas validé (IPlayer::Authorize). Faux par défaut (compatibilité).
     bool RequireScriptAuthorization{false};
+    // Véhicules. Distance maximale (mètres) entre un personnage et le véhicule distant où il monte
+    // (0 = aucune limite). Véhicules que le serveur garde par joueur : au-delà, le plus ancien est retiré
+    // (0 = aucune limite). Prendre le volant du véhicule d'un autre joueur connecté : refusé par défaut.
+    float MaxVehicleEnterDistance{10.f};
+    uint16_t MaxVehiclesPerPlayer{1};
+    bool AllowVehicleTakeover{false};
+    // Déplacements. Vitesses maximales (m/s ; 0 = aucune limite) : à pied (horizontale, pour ne pas
+    // compter les chutes) et en véhicule. Larges exprès : métro, voyage rapide et ascenseurs restent
+    // permis, seule la triche grossière est visée. Un dépassement est une infraction ; une infraction
+    // s'efface toutes les MovementStrikeDecaySeconds ; expulsion à MovementKickStrikes (0 = journal seulement).
+    float MaxFootSpeed{50.f};
+    float MaxVehicleSpeed{150.f};
+    float MovementBurstSeconds{3.f};
+    float MovementStrikeDecaySeconds{60.f};
+    uint16_t MovementKickStrikes{10};
+    // Débit des messages client (Security/RateLimit.h). RateLimitScale multiplie toutes les limites
+    // (0 = aucune limite). Un message au-delà est ignoré ; expulsion à RateLimitKickDrops messages ignorés
+    // (le compteur baisse de 10 par seconde ; 0 = jamais d'expulsion).
+    float RateLimitScale{1.f};
+    uint16_t RateLimitKickDrops{100};
     FlecsConfig Flecs{};
 
     const char* GetName() const override { return Name.c_str(); }
@@ -50,5 +70,8 @@ struct Config : IConfig
 
     // WITH_DEFAULT : une clé absente du fichier garde sa valeur par défaut au lieu d'empêcher le démarrage.
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Config, Name, Description, IconUrl, MaxPlayer, Tags, TickRate, UpdateRate, Public, Port,
-                                                Password, ApiKey, RequireScriptAuthorization, Flecs)
+                                                Password, ApiKey, RequireScriptAuthorization, MaxVehicleEnterDistance,
+                                                MaxVehiclesPerPlayer, AllowVehicleTakeover, MaxFootSpeed, MaxVehicleSpeed,
+                                                MovementBurstSeconds, MovementStrikeDecaySeconds, MovementKickStrikes, RateLimitScale,
+                                                RateLimitKickDrops, Flecs)
 };

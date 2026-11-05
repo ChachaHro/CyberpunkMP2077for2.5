@@ -1,6 +1,7 @@
 #include "AttachmentComponent.h"
 #include "GameServer.h"
 #include "PlayerComponent.h"
+#include "Security/GameplayRules.h"
 
 void ReplicateSetAttachmentComponent(flecs::entity aEntity, AttachmentComponent& aComponent)
 {
@@ -23,7 +24,7 @@ void ReplicateSetAttachmentComponent(flecs::entity aEntity, AttachmentComponent&
             GServer->Send(aPlayerComponent.Connection, enter);
         });
 
-    if (aComponent.SlotId == 0xb000b1d029d0cea0ULL) // seat_front_left
+    if (aComponent.SlotId == GameplayRules::kDriverSeatId)
     {
         server::NotifyVehicleControlAssigned control;
         control.set_vehicle_id(aComponent.Parent);

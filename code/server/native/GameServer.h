@@ -4,6 +4,7 @@
 #include "System/Log.h"
 #include "Config.h"
 #include "Game/World.h"
+#include "Security/RateLimit.h"
 
 struct PlayerComponent;
 
@@ -65,6 +66,19 @@ protected:
 private:
 
     void FetchServerEntitlements();
+
+    // Limite de débit par connexion et par type de message (Security/RateLimit.h). Faux = message à
+    // ignorer ; aKick passe à vrai si la connexion doit être expulsée.
+    bool AllowMessage(ConnectionId aConnectionId, uint64_t aOpcode, bool& aKick) noexcept;
+
+    struct ConnectionRate
+    {
+        std::array<RateLimit::Bucket, static_cast<size_t>(RateLimit::MessageKind::Count)> Buckets{};
+        std::array<std::chrono::steady_clock::time_point, static_cast<size_t>(RateLimit::MessageKind::Count)> LastMessage{};
+        RateLimit::Offences Offences{};
+        std::chrono::steady_clock::time_point LastDrop{};
+    };
+    Map<ConnectionId, ConnectionRate> m_rateLimits;
 
     Path m_path;
     Log m_log;

@@ -5,6 +5,8 @@
 #include "Config.h"
 #include "Game/World.h"
 
+struct PlayerComponent;
+
 template <typename T>
 concept NetworkMessage = requires(T a, Buffer::Writer writer, Buffer::Reader reader) {
     {
@@ -45,6 +47,10 @@ struct GameServer final : Server
     gsl::not_null<World*> GetWorld() noexcept { return m_pWorld.get(); }
     gsl::not_null<TaskQueue*> GetTaskQueue() noexcept { return &m_tasks; }
     gsl::not_null<Log*> GetLog() noexcept { return &m_log; }
+
+    // Le joueur peut-il agir et recevoir le monde ? Toujours vrai sauf si RequireScriptAuthorization
+    // est activé et qu'aucun plugin ne l'a encore validé (IPlayer::Authorize).
+    [[nodiscard]] bool IsPlayerAllowed(const PlayerComponent& aPlayer) const noexcept;
 
 protected:
     void OnUpdate() override;

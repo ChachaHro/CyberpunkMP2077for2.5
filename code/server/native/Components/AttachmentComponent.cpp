@@ -17,6 +17,9 @@ void ReplicateSetAttachmentComponent(flecs::entity aEntity, AttachmentComponent&
             if (!IsDebug() && player == aEntity.parent())
                 return;
 
+            if (!GServer->IsPlayerAllowed(aPlayerComponent))
+                return;
+
             GServer->Send(aPlayerComponent.Connection, enter);
         });
 
@@ -45,6 +48,9 @@ void ReplicateRemoveAttachmentComponent(flecs::entity aEntity, const AttachmentC
         [aEntity, &message](flecs::entity player, const PlayerComponent& aPlayerComponent)
         {
             if (!IsDebug() && player == aEntity.parent())
+                return;
+
+            if (!GServer->IsPlayerAllowed(aPlayerComponent))
                 return;
 
             GServer->Send(aPlayerComponent.Connection, message);

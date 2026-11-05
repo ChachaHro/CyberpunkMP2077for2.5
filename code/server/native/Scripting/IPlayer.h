@@ -23,6 +23,9 @@ struct IPlayer
     // et expulsion différée au prochain tick (sûre depuis un callback d'arrivée de joueur).
     virtual const char* TakeSessionToken() = 0;
     virtual void Kick() = 0;
+    // Validation du joueur par le plugin (jeton accepté). Utile quand RequireScriptAuthorization est
+    // activé : avant, le joueur ne peut rien faire ni rien recevoir du monde. En fin de vtable.
+    virtual void Authorize() = 0;
 
 protected:
 

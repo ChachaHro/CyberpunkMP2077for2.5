@@ -243,6 +243,16 @@ void Server::HandleMessage(const void* apData, const uint32_t aSize, const Conne
         return;
 
     const auto pData = static_cast<const uint8_t*>(apData);
+
+    // Un client légitime n'envoie rien d'autre que la poignée de main tant qu'elle n'est pas acceptée
+    // (il attend l'heure du serveur, envoyée après). Tout autre paquet avant elle est une attaque.
+    if (pData[0] != kHandshake && !IsAlive(aConnectionId))
+    {
+        spdlog::warn("{} sent packet type {} before handshake, kicking", aConnectionId, pData[0]);
+        Kick(aConnectionId);
+        return;
+    }
+
     switch (pData[0])
     {
     case kPayload:
@@ -255,15 +265,34 @@ void Server::HandleMessage(const void* apData, const uint32_t aSize, const Conne
         HandleHandshake(pData + 1, aSize - 1, aConnectionId);
         break;
     default:
-        assert(false);
+        // Type inconnu : le client ne parle pas notre protocole (assert inopérant en Release)
+        spdlog::warn("{} sent unknown packet type {}, kicking", aConnectionId, pData[0]);
+        Kick(aConnectionId);
         break;
     }
 }
 
 void Server::HandleCompressedPayload(const void* apData, uint32_t aSize, ConnectionId aConnectionId) noexcept
 {
+    // La taille décompressée est annoncée par l'envoyeur : on la borne AVANT d'allouer
+    // (sinon quelques octets suffisent à demander plusieurs Gio et à faire tomber le serveur).
+    size_t uncompressedSize = 0;
+    if (!snappy::GetUncompressedLength(static_cast<const char*>(apData), aSize, &uncompressedSize) ||
+        uncompressedSize > kMaxUncompressedPayloadSize)
+    {
+        spdlog::warn("{} sent compressed payload with invalid size {} (max {}), kicking", aConnectionId, uncompressedSize,
+                     kMaxUncompressedPayloadSize);
+        Kick(aConnectionId);
+        return;
+    }
+
     std::string data;
-    snappy::Uncompress((const char*)apData, aSize, &data);
+    if (!snappy::Uncompress(static_cast<const char*>(apData), aSize, &data))
+    {
+        spdlog::warn("{} sent corrupted compressed payload, kicking", aConnectionId);
+        Kick(aConnectionId);
+        return;
+    }
 
     if (!data.empty())
     {
@@ -273,7 +302,15 @@ void Server::HandleCompressedPayload(const void* apData, uint32_t aSize, Connect
 
 void Server::HandleHandshake(const uint8_t* apData, uint32_t aSize, ConnectionId aConnectionId) noexcept
 {
-    m_queuedConnections.erase(std::ranges::find(m_queuedConnections, aConnectionId));
+    // Une seule poignée de main par connexion : une seconde (ou une connexion inconnue) est ignorée.
+    // Avant, erase(end()) sur une seconde poignée de main était un comportement indéfini.
+    const auto queued = std::ranges::find(m_queuedConnections, aConnectionId);
+    if (queued == std::end(m_queuedConnections))
+    {
+        spdlog::warn("{} sent an unexpected handshake, ignored", aConnectionId);
+        return;
+    }
+    m_queuedConnections.erase(queued);
 
     if (aSize < 16)
     {

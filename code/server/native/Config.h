@@ -12,7 +12,7 @@ struct FlecsConfig
     uint16_t GetPort() const { return Port; }
     const char* GetIpAddress() const { return IpAddress.c_str(); }
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(FlecsConfig, Enabled, Port, IpAddress)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(FlecsConfig, Enabled, Port, IpAddress)
 };
 
 struct Config : IConfig
@@ -29,6 +29,9 @@ struct Config : IConfig
     uint16_t TickRate{60};
     uint16_t UpdateRate{10};
     std::string Password{};
+    // Si vrai, un joueur ne peut rien faire (apparaître, bouger, véhicules, chat, RPC) et ne reçoit pas
+    // le monde tant qu'un plugin ne l'a pas validé (IPlayer::Authorize). Faux par défaut (compatibilité).
+    bool RequireScriptAuthorization{false};
     FlecsConfig Flecs{};
 
     const char* GetName() const override { return Name.c_str(); }
@@ -45,5 +48,7 @@ struct Config : IConfig
     const char* GetPassword() const { return Password.c_str(); }
     const FlecsConfig& GetFlecsConfig() const { return Flecs; }
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Config, Name, Description, IconUrl, MaxPlayer, Tags, TickRate, UpdateRate, Public, Port, Password, ApiKey, Flecs)
+    // WITH_DEFAULT : une clé absente du fichier garde sa valeur par défaut au lieu d'empêcher le démarrage.
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Config, Name, Description, IconUrl, MaxPlayer, Tags, TickRate, UpdateRate, Public, Port,
+                                                Password, ApiKey, RequireScriptAuthorization, Flecs)
 };

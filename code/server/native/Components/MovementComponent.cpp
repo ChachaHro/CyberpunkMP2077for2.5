@@ -37,6 +37,9 @@ void ReplicateMovementComponent(flecs::entity aEntity, const MovementComponent& 
             if (!IsDebug() && player == aEntity.parent())
                 return;
 
+            if (!GServer->IsPlayerAllowed(aPlayerComponent))
+                return;
+
             GServer->Send(aPlayerComponent.Connection, message);
         });
 }

@@ -98,3 +98,10 @@ void PlayerScriptInstance::Kick()
             GServer->Kick(connection);
     });
 }
+
+void PlayerScriptInstance::Authorize()
+{
+    // get_mut sans modified() : ne redéclenche pas l'observer d'arrivée du joueur.
+    if (auto* pComponent = m_player.get_mut<PlayerComponent>())
+        pComponent->Authorized = true;
+}

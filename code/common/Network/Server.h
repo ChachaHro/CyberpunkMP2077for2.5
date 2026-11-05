@@ -15,6 +15,10 @@ struct Server
 
     TP_NOCOPYMOVE(Server);
 
+    // Taille maximale d'un paquet une fois décompressé. Les messages légitimes sont sérialisés dans un
+    // tampon de 256 Kio (GameServer::Send) : 1 Mio laisse de la marge sans permettre une bombe mémoire.
+    static constexpr size_t kMaxUncompressedPayloadSize = 1u << 20;
+
     bool Host(uint16_t aPort, uint32_t aTickRate, bool bEnableDualStackIP = true) noexcept;
     void Close() noexcept;
 

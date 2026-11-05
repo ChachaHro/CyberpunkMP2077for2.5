@@ -60,5 +60,14 @@ namespace CyberpunkSdk.Game
         {
             player.Kick();
         }
+
+        /// <summary>
+        /// Valide le joueur (par exemple après vérification de son jeton). Si le serveur exige une
+        /// validation (RequireScriptAuthorization), le joueur ne peut rien faire avant cet appel.
+        /// </summary>
+        public void Authorize()
+        {
+            player.Authorize();
+        }
     }
 }

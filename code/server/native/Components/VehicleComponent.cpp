@@ -25,6 +25,9 @@ void ReplicateVehicleSpawn(flecs::entity aEntity, const VehicleComponent& aVehic
             if (!IsDebug() && player == aEntity.parent())
                 return;
 
+            if (!GServer->IsPlayerAllowed(aPlayerComponent))
+                return;
+
             GServer->Send(aPlayerComponent.Connection, load);
         });
 }

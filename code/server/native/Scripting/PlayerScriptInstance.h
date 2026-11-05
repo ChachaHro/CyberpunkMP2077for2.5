@@ -19,6 +19,7 @@ struct PlayerScriptInstance final : IPlayer
     void Call(uint64_t Klass, uint64_t Function, IBuffer* Arguments) override;
     const char* TakeSessionToken() override;
     void Kick() override;
+    void Authorize() override;
 
 protected:
     flecs::entity m_player;

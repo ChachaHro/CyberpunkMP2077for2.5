@@ -86,6 +86,9 @@ void Level::Add(flecs::entity aEntity) noexcept
         if (!IsDebug() && owner == aEntity)
             return;
 
+        if (!GServer->IsPlayerAllowed(aPlayerComponent))
+            return;
+
         GServer->Send(aPlayerComponent.Connection, load);
     });
 
@@ -111,6 +114,9 @@ void Level::Remove(flecs::entity aEntity) noexcept
     GetWorld()->each([this, &unload, owner](flecs::entity aEntity, const PlayerComponent& aPlayerComponent)
     {
         if (!IsDebug() && owner == aEntity)
+            return;
+
+        if (!GServer->IsPlayerAllowed(aPlayerComponent))
             return;
 
         GServer->Send(aPlayerComponent.Connection, unload);
@@ -173,12 +179,18 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     server::SpawnCharacterResponse response;
     response.set_cookie(aMessage.get_cookie());
 
-    auto* pComponent = player.get_mut<PlayerComponent>();
+    auto* pComponent = player ? player.get_mut<PlayerComponent>() : nullptr;
     if (!pComponent)
     {
         spdlog::warn("Received a spawn character request from player who doesn't have a player component!");
 
         GServer->Send(aMessage.ConnectionId, response);
+        return;
+    }
+
+    if (!GServer->IsPlayerAllowed(*pComponent))
+    {
+        spdlog::warn("Spawn request from unauthorized connection {:x}, ignored", aMessage.ConnectionId);
         return;
     }
 
@@ -203,7 +215,7 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
 {
     flecs::entity target(GetWorld()->get_world(), aMessage.get_id());
 
-    if (!target)
+    if (!target || !target.is_alive())
     {
         spdlog::warn("Attempt to move invalid entity {:x} from connection {:x}", aMessage.get_id(), aMessage.ConnectionId);
         return;
@@ -228,6 +240,9 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
         spdlog::warn("The entity's owner is not the current player! From connection {:x}", aMessage.ConnectionId);
         return;
     }
+
+    if (!GServer->IsPlayerAllowed(*pPlayer))
+        return;
 
     MovementComponent component;
 
@@ -262,7 +277,7 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
 {
     flecs::entity target(GetWorld()->get_world(), aMessage.get_id());
 
-    if (!target)
+    if (!target || !target.is_alive())
     {
         spdlog::warn("Attempt to enter vehicle from invalid entity from connection {:x}", aMessage.ConnectionId);
         return;
@@ -288,12 +303,17 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
         return;
     }
 
+    if (!GServer->IsPlayerAllowed(*pPlayer))
+        return;
+
     flecs::entity vehicle;
 
     if (aMessage.has_remote_vehicle_id())
     {
         vehicle = flecs::entity(GetWorld()->get_world(), aMessage.get_remote_vehicle_id());
-        if (!vehicle)
+        // Doit être un véhicule vivant : sinon on pourrait « monter » dans n'importe quelle entité
+        // (le puppet d'un autre joueur) et s'en attribuer la propriété.
+        if (!vehicle || !vehicle.is_alive() || !vehicle.has<VehicleComponent>())
         {
             spdlog::warn("Attempt to enter invalid vehicle {:x} from connection {:x}", aMessage.get_remote_vehicle_id(), aMessage.ConnectionId);
             return;
@@ -323,7 +343,7 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
 {
     flecs::entity target(GetWorld()->get_world(), aMessage.get_id());
 
-    if (!target)
+    if (!target || !target.is_alive())
     {
         spdlog::warn("Attempt to exit vehicle from invalid entity from connection {:x}", aMessage.ConnectionId);
         return;
@@ -348,6 +368,9 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
         spdlog::warn("The entity's owner is not the current player! From connection {:x}", aMessage.ConnectionId);
         return;
     }
+
+    if (!GServer->IsPlayerAllowed(*pPlayer))
+        return;
 
     //if (auto* pAttachment = target.get<AttachmentComponent>())
     //    pAttachment->Parent.destruct();

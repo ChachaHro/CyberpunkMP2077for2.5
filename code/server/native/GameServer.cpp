@@ -1,6 +1,7 @@
 #include "GameServer.h"
 
 #include <Components/PlayerComponent.h>
+#include "Security/ConnectionRules.h"
 
 #include "Core/Filesystem.h"
 #include "Game/Level.h"
@@ -165,21 +166,60 @@ void GameServer::HandleAuthentication(const PacketEvent<client::AuthenticationRe
         return;
     }
 
-    // Jeton de session du launcher : validé par le plugin RP à l'arrivée du joueur. Jamais journalisé.
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    // Une seule authentification par connexion : une seconde demande est ignorée.
+    if (pPlayerManager->GetByConnectionId(aRequest.ConnectionId))
+    {
+        spdlog::warn("Connection {:x} sent a second authentication request, ignored", aRequest.ConnectionId);
+        return;
+    }
+
+    const auto refuse = [&](const char* acError, const char* acReason)
+    {
+        response.set_success(false);
+        response.set_error(acError);
+
+        spdlog::warn("Connection {:x} refused ({}): username \"{}\"", aRequest.ConnectionId, acReason,
+                     ConnectionRules::SanitizeForLog(aRequest.get_username(), 64));
+        Send(aRequest.ConnectionId, response);
+        Kick(aRequest.ConnectionId);
+    };
+
+    // Jeton de session du launcher : validé par le plugin du serveur à l'arrivée du joueur. Jamais journalisé.
     constexpr size_t kMaxSessionTokenLength = 256;
     const auto& token = aRequest.get_token();
     if (token.size() > kMaxSessionTokenLength)
     {
-        response.set_success(false);
-        response.set_error("Invalid session!");
-
-        spdlog::warn("Connection attempt from {} with an oversized session token", aRequest.get_username());
-        Send(aRequest.ConnectionId, response);
-        Kick(aRequest.ConnectionId);
+        refuse("Invalid session!", "oversized session token");
         return;
     }
 
-    spdlog::info("Authorize connection from {}", aRequest.get_username());
+    const auto& username = aRequest.get_username();
+    if (!ConnectionRules::IsValidUsername(username))
+    {
+        refuse("Invalid username!", "invalid username");
+        return;
+    }
+
+    if (ConnectionRules::IsServerFull(pPlayerManager->Count(), m_config.MaxPlayer))
+    {
+        refuse("Server is full!", "server full");
+        return;
+    }
+
+    bool duplicate = false;
+    pPlayerManager->ForEach([&](flecs::entity aPlayer) {
+        if (const auto* pComponent = aPlayer.get<PlayerComponent>())
+            duplicate = duplicate || ConnectionRules::SameUsername(pComponent->Username, username);
+    });
+    if (duplicate)
+    {
+        refuse("This username is already connected!", "username already connected");
+        return;
+    }
+
+    spdlog::info("Authorize connection from {}", ConnectionRules::SanitizeForLog(username, 64));
     response.set_success(true);
 
     server::Settings settings;
@@ -198,7 +238,12 @@ void GameServer::HandleAuthentication(const PacketEvent<client::AuthenticationRe
         spdlog::error("Failed to send message to {:x}", aRequest.ConnectionId);
 
     // The player was accepted, rpc definitions are ready, we can create the player's handle
-    GetWorld()->get_mut<PlayerManager>()->Create(aRequest.ConnectionId, aRequest.get_username(), String(token.c_str()));
+    pPlayerManager->Create(aRequest.ConnectionId, username, String(token.c_str()));
+}
+
+bool GameServer::IsPlayerAllowed(const PlayerComponent& aPlayer) const noexcept
+{
+    return !m_config.RequireScriptAuthorization || aPlayer.Authorized;
 }
 
 ScratchAllocator& GameServer::GetScratch()

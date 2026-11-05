@@ -114,6 +114,9 @@ void RpcScriptInstance::HandleRpcCall(const PacketEvent<client::RpcCall>& aMessa
     const auto* pPlayerManager = GServer->GetWorld()->get_mut<PlayerManager>();
     if (const auto player = pPlayerManager->GetByConnectionId(aMessage.ConnectionId))
     {
+        if (const auto* pComponent = player.get<PlayerComponent>(); !pComponent || !GServer->IsPlayerAllowed(*pComponent))
+            return;
+
         auto& call = m_calls.emplace_back(aMessage.get_id(), player.raw_id());
 
         call.m_buffer.Set(aMessage.get_arguments());

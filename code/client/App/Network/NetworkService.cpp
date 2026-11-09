@@ -107,27 +107,13 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
     request.set_cookie(0);
 
     auto appSystem = Red::GetGameSystem<NetworkWorldSystem>()->GetAppearanceSystem();
-    request.set_equipment(appSystem->GetPlayerItems(player));
-
-
-    auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
-
-    // GetCustomizationState() returns (ccSystem + 0x78), which can never be null - the
-    // instance behind it can be, and is during normal gameplay. Serializing a null
-    // instance crashes the game, so check the instance itself.
-    auto stateHandle = GetCustomizationState(ccSystem);
-
-    if (stateHandle && stateHandle->instance)
-    {
-        auto writer = CMPWriter();
-        CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
-        spdlog::info("Got bytes: {}", writer.bytes.size());
-        request.set_ccstate(writer.bytes);
-    }
-    else
-    {
+    Vector<String> equipment;
+    Vector<uint8_t> ccstate;
+    if (!appSystem->CaptureLocalAppearance(equipment, ccstate))
         spdlog::info("CustomizationState was null");
-    }
+    spdlog::info("Got bytes: {}", ccstate.size());
+    request.set_equipment(equipment);
+    request.set_ccstate(ccstate);
 
     Send(request);
 }

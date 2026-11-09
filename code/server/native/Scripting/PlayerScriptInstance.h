@@ -20,6 +20,7 @@ struct PlayerScriptInstance final : IPlayer
     const char* TakeSessionToken() override;
     void Kick() override;
     void Authorize() override;
+    bool SetAppearance(const char* Appearance) override;
 
 protected:
     flecs::entity m_player;

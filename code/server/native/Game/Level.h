@@ -19,6 +19,8 @@ struct Level
     void RemoveVehicle(flecs::entity aVehicle) noexcept;
     // Retire tous les véhicules d'un joueur (à la déconnexion, avant de détruire son entité).
     void RemovePlayerVehicles(flecs::entity aPlayer) noexcept;
+    // Recharge un personnage chez les autres clients (nouvelle apparence) : déchargé puis rechargé.
+    void RefreshAppearance(flecs::entity aPuppet) noexcept;
 
     gsl::not_null<GridCell*> GetCell(GridCell::TPosition aPosition) noexcept;
     gsl::not_null<World*> GetWorld() noexcept { return m_pWorld; }

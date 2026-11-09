@@ -20,6 +20,12 @@ struct AppearanceSystem : RED4ext::IScriptable
     void AddEntity(const Red::EntityID entityID, const Red::DynArray<Red::TweakDBID>& items, const Vector<uint8_t> ccstate);
     Vector<String> GetPlayerItems(Red::Handle<Red::GameObject> player);
     bool ApplyAppearance(Red::Handle<Red::GameObject> object);
+    // Apparence du joueur local (équipement visible + état de personnalisation sérialisé). Faux si l'état
+    // n'est pas disponible (il peut être absent en jeu normal).
+    bool CaptureLocalAppearance(Vector<String>& aEquipment, Vector<uint8_t>& aCcstate);
+    // Même chose pour les scripts : JSON {"v":1,"ccstate":"<hex>","equipment":[...]}, ou "" si indisponible.
+    // Un mod peut l'envoyer à un plugin serveur (RPC) qui la réapplique avec Player.SetAppearance.
+    Red::CString GetLocalAppearance();
 
     void OnWorldAttached(RED4ext::world::RuntimeScene* aScene);
     void OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScene);
@@ -33,4 +39,5 @@ RTTI_DEFINE_CLASS(AppearanceSystem, {
     RTTI_ALIAS("CyberpunkMP.World.AppearanceSystem");
     RTTI_METHOD(GetEntityItems);
     RTTI_METHOD(ApplyAppearance);
+    RTTI_METHOD(GetLocalAppearance);
 });

@@ -55,6 +55,67 @@ Vector<String> AppearanceSystem::GetPlayerItems(Red::Handle<Red::GameObject> pla
     return equipment;
 }
 
+bool AppearanceSystem::CaptureLocalAppearance(Vector<String>& aEquipment, Vector<uint8_t>& aCcstate)
+{
+    aEquipment.clear();
+    aCcstate.clear();
+
+    const auto playerSystem = Red::GetGameSystem<Game::PlayerSystem>();
+    Red::Handle<Red::GameObject> player;
+    if (playerSystem)
+        playerSystem->GetLocalPlayerControlledGameObject(player);
+    if (!player)
+        return false;
+
+    aEquipment = GetPlayerItems(player);
+
+    auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
+    if (!ccSystem)
+        return false;
+
+    // GetCustomizationState() returns (ccSystem + 0x78), which can never be null - the instance behind it
+    // can be, and is during normal gameplay. Serializing a null instance crashes the game.
+    auto stateHandle = GetCustomizationState(ccSystem);
+    if (!stateHandle || !stateHandle->instance)
+        return false;
+
+    auto writer = CMPWriter();
+    CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
+    aCcstate = writer.bytes;
+    return !aCcstate.empty();
+}
+
+Red::CString AppearanceSystem::GetLocalAppearance()
+{
+    Vector<String> equipment;
+    Vector<uint8_t> ccstate;
+    if (!CaptureLocalAppearance(equipment, ccstate))
+    {
+        spdlog::info("[Appearance] local appearance not available");
+        return "";
+    }
+
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string hex;
+    hex.reserve(ccstate.size() * 2);
+    for (const auto byte : ccstate)
+    {
+        hex.push_back(kHex[byte >> 4]);
+        hex.push_back(kHex[byte & 0x0F]);
+    }
+
+    nlohmann::json data;
+    data["v"] = 1;
+    data["ccstate"] = hex;
+    data["equipment"] = nlohmann::json::array();
+    for (const auto& item : equipment)
+        data["equipment"].push_back(std::string(item.c_str()));
+
+    const auto text = data.dump();
+    spdlog::info("[Appearance] local appearance: {} ccstate bytes, {} item(s)", ccstate.size(), equipment.size());
+    return text.c_str();
+}
+
 void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArray<Red::TweakDBID>& items, const Vector<uint8_t> ccstate)
 {
     spdlog::info("Logging Entity Appearance: {}", entityID.hash);

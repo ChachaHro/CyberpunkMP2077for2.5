@@ -239,6 +239,28 @@ void Level::RemoveVehicle(flecs::entity aVehicle) noexcept
     Remove(aVehicle);
 }
 
+void Level::RefreshAppearance(flecs::entity aPuppet) noexcept
+{
+    if (!aPuppet || !aPuppet.is_alive())
+        return;
+
+    server::NotifyEntityUnload unload;
+    unload.set_id(aPuppet);
+    const auto load = Serialize(aPuppet);
+    const auto owner = aPuppet.parent();
+
+    GetWorld()->each(
+        [&unload, &load, owner](flecs::entity aEntity, const PlayerComponent& aPlayerComponent)
+        {
+            if (!IsDebug() && owner == aEntity)
+                return;
+            if (!GServer->IsPlayerAllowed(aPlayerComponent))
+                return;
+            GServer->Send(aPlayerComponent.Connection, unload);
+            GServer->Send(aPlayerComponent.Connection, load);
+        });
+}
+
 void Level::RemovePlayerVehicles(flecs::entity aPlayer) noexcept
 {
     if (!aPlayer || !aPlayer.is_alive())
@@ -284,8 +306,8 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
 
     glm::vec3 pos = {aMessage.get_position().get_x(), aMessage.get_position().get_y(), aMessage.get_position().get_z()};
     glm::vec3 rot = {0.f, 0.f, aMessage.get_rotation()};
-    const Vector<String> equipment = aMessage.get_equipment();
-    const Vector<uint8_t> ccstate = aMessage.get_ccstate();
+    Vector<String> equipment = aMessage.get_equipment();
+    Vector<uint8_t> ccstate = aMessage.get_ccstate();
 
     server::SpawnCharacterResponse response;
     response.set_cookie(aMessage.get_cookie());
@@ -313,6 +335,13 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         response.set_id(pComponent->Puppet);
         GServer->Send(aMessage.ConnectionId, response);
         return;
+    }
+
+    // Apparence gardée par un plugin : elle remplace celle de la partie chargée par le client
+    if (pComponent->HasAppearanceOverride)
+    {
+        equipment = pComponent->AppearanceOverride.equipment;
+        ccstate = pComponent->AppearanceOverride.ccstate;
     }
 
     if (IsDebug())

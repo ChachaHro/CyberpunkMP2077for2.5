@@ -3,6 +3,9 @@
 #include <GameServer.h>
 #include <PlayerManager.h>
 #include "IRpc.h"
+#include "Components/AppearanceComponent.h"
+#include "Game/Level.h"
+#include "Security/AppearanceRules.h"
 
 
 PlayerScriptInstance::PlayerScriptInstance(flecs::entity aPlayer)
@@ -104,4 +107,60 @@ void PlayerScriptInstance::Authorize()
     // get_mut sans modified() : ne redéclenche pas l'observer d'arrivée du joueur.
     if (auto* pComponent = m_player.get_mut<PlayerComponent>())
         pComponent->Authorized = true;
+}
+
+bool PlayerScriptInstance::SetAppearance(const char* Appearance)
+{
+    if (!Appearance)
+        return false;
+
+    const std::string_view text(Appearance);
+    if (text.empty() || text.size() > AppearanceRules::kMaxTextBytes)
+        return false;
+
+    AppearanceComponent appearance;
+    try
+    {
+        const auto data = nlohmann::json::parse(text);
+        if (!data.is_object() || !data.contains("v") || data["v"] != 1)
+            return false;
+
+        std::vector<uint8_t> bytes;
+        if (!AppearanceRules::DecodeHex(data.at("ccstate").get<std::string>(), bytes) || bytes.empty())
+            return false;
+        appearance.ccstate.assign(bytes.begin(), bytes.end());
+
+        const auto& items = data.at("equipment");
+        if (!items.is_array() || items.size() > AppearanceRules::kMaxItems)
+            return false;
+        for (const auto& item : items)
+        {
+            const auto name = item.get<std::string>();
+            if (!AppearanceRules::IsValidItemName(name))
+                return false;
+            appearance.equipment.push_back(name.c_str());
+        }
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+
+    // get_mut sans modified() : ne redéclenche pas l'observer d'arrivée du joueur.
+    auto* pComponent = m_player.get_mut<PlayerComponent>();
+    if (!pComponent)
+        return false;
+
+    pComponent->AppearanceOverride = appearance;
+    pComponent->HasAppearanceOverride = true;
+
+    if (pComponent->Puppet && pComponent->Puppet.is_alive())
+    {
+        pComponent->Puppet.set<AppearanceComponent>(appearance);
+        GServer->GetWorld()->get_mut<Level>()->RefreshAppearance(pComponent->Puppet);
+    }
+
+    spdlog::info("Appearance set for player {:x}: {} bytes, {} item(s)", m_player.id(), appearance.ccstate.size(),
+                 appearance.equipment.size());
+    return true;
 }

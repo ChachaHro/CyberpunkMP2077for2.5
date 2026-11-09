@@ -26,6 +26,10 @@ struct IPlayer
     // Validation du joueur par le plugin (jeton accepté). Utile quand RequireScriptAuthorization est
     // activé : avant, le joueur ne peut rien faire ni rien recevoir du monde. En fin de vtable.
     virtual void Authorize() = 0;
+    // Apparence que les autres joueurs voient pour ce joueur, en JSON {"v":1,"ccstate":"<hex>","equipment":[...]}
+    // (format du client : AppearanceSystem.GetLocalAppearance). Gardée pour la connexion et utilisée à
+    // l'apparition ; si le personnage est déjà là, il est rechargé chez les autres. Faux si refusée. En fin de vtable.
+    virtual bool SetAppearance(const char* Appearance) = 0;
 
 protected:
 

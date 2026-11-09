@@ -69,5 +69,15 @@ namespace CyberpunkSdk.Game
         {
             player.Authorize();
         }
+
+        /// <summary>
+        /// Apparence que les autres joueurs voient, au format du client (JSON {"v":1,"ccstate":"hex","equipment":[...]},
+        /// voir AppearanceSystem.GetLocalAppearance côté client). Gardée pour la connexion ; si le personnage est
+        /// déjà apparu, il est rechargé chez les autres. Faux si l'apparence est refusée (format, tailles).
+        /// </summary>
+        public bool SetAppearance(string appearance)
+        {
+            return player.SetAppearance(appearance);
+        }
     }
 }

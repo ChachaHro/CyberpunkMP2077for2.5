@@ -486,6 +486,11 @@ void NetworkWorldSystem::RequestJoin()
     s_joinRequested = true;
 }
 
+bool NetworkWorldSystem::IsJoinPending()
+{
+    return s_joinRequested;
+}
+
 bool NetworkWorldSystem::ConsumeAutoConnect()
 {
     if (!s_joinRequested)

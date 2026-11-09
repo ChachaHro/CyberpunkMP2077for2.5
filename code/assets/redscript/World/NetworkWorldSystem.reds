@@ -9,6 +9,7 @@ public native class NetworkWorldSystem extends IGameSystem {
     // Intégration d'un launcher externe (--session=, --launcher=, --launcher-key=) : connexion
     // automatique après le choix au menu, jeton de session et relais local pour en obtenir un neuf.
     public native func ConsumeAutoConnect() -> Bool;
+    public native func IsJoinPending() -> Bool;
     public native func RequestJoin() -> Void;
     public native func IsLaunchedByLauncher() -> Bool;
     public native func HasSessionToken() -> Bool;

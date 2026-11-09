@@ -55,6 +55,8 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     bool HasLauncherRelay();
     // Demande un jeton neuf au launcher (bloquant, quelques secondes au plus). Faux si injoignable.
     bool FetchSessionToken();
+    // « Rejoindre » choisi et pas encore consommé (lecture seule) : pour habiller l'écran de chargement.
+    bool IsJoinPending();
     // Écrit une ligne dans le journal du client (CyberpunkMP.log), pour les scripts et mods : traces de
     // diagnostic qui survivent à un plantage (le fichier est vidé sur disque à chaque ligne).
     void WriteLog(const Red::CString& aMessage);
@@ -96,6 +98,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(HasSessionToken);
     RTTI_METHOD(HasLauncherRelay);
     RTTI_METHOD(FetchSessionToken);
+    RTTI_METHOD(IsJoinPending);
     RTTI_METHOD(WriteLog);
     RTTI_METHOD(GetEntityIdByServerId);
     RTTI_METHOD(GetAppearanceSystem);
